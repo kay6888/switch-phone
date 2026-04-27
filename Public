@@ -1,1 +1,160 @@
 
+<!DOCTYPE html>
+<html>
+<head>
+  <title>UNLIMITED SWITCH</title>
+  <style>
+    body {
+      background: #0a0a0a;
+      color: #00ff88;
+      font-family: 'Courier New', monospace;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      background: #1a1a1a;
+      padding: 40px;
+      border-radius: 8px;
+      border: 1px solid #00ff88;
+      max-width: 500px;
+      width: 100%;
+      text-align: center;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 30px;
+      letter-spacing: 2px;
+    }
+    .number {
+      font-size: 32px;
+      background: #0a0a0a;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+      font-weight: bold;
+      letter-spacing: 2px;
+    }
+    button {
+      background: #00ff88;
+      color: #0a0a0a;
+      border: none;
+      padding: 15px 30px;
+      font-size: 18px;
+      font-weight: bold;
+      font-family: 'Courier New', monospace;
+      cursor: pointer;
+      border-radius: 8px;
+      margin: 10px;
+      transition: all 0.2s;
+    }
+    button:hover {
+      background: #0a0a0a;
+      color: #00ff88;
+      border: 1px solid #00ff88;
+    }
+    .history {
+      margin-top: 30px;
+      text-align: left;
+      border-top: 1px solid #333;
+      padding-top: 20px;
+    }
+    .history h3 {
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .history div {
+      font-size: 12px;
+      color: #666;
+      margin: 5px 0;
+      font-family: monospace;
+    }
+    .status {
+      font-size: 12px;
+      color: #888;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>✦ UNLIMITED SWITCH ✦</h1>
+    <div class="number" id="currentNumber">—</div>
+    <button onclick="switchNumber()">⟳ GET NEW NUMBER</button>
+    <button onclick="resetNumber()" style="background:#333; color:#fff;">🗑 DELETE NUMBER</button>
+    <div class="history">
+      <h3>NUMBER HISTORY</h3>
+      <div id="historyList">No history yet</div>
+    </div>
+    <div class="status" id="status">Ready</div>
+  </div>
+
+  <script>
+    let userId = localStorage.getItem('userId');
+    
+    async function loadNumber() {
+      const response = await fetch('/api/number', {
+        headers: { 'X-User-Id': userId || '' }
+      });
+      const data = await response.json();
+      const newUserId = response.headers.get('X-User-Id');
+      if (newUserId) {
+        userId = newUserId;
+        localStorage.setItem('userId', userId);
+      }
+      document.getElementById('currentNumber').innerText = data.number;
+      updateHistory(data.history);
+    }
+    
+    async function switchNumber() {
+      document.getElementById('status').innerText = 'Switching...';
+      const response = await fetch('/api/switch', {
+        method: 'POST',
+        headers: { 'X-User-Id': userId || '' }
+      });
+      const data = await response.json();
+      const newUserId = response.headers.get('X-User-Id');
+      if (newUserId) {
+        userId = newUserId;
+        localStorage.setItem('userId', userId);
+      }
+      document.getElementById('currentNumber').innerText = data.number;
+      updateHistory(data.history);
+      document.getElementById('status').innerText = `✅ Switched to ${data.number}`;
+      setTimeout(() => {
+        document.getElementById('status').innerText = 'Ready';
+      }, 2000);
+    }
+    
+    async function resetNumber() {
+      if (confirm('Delete your current number? You can get a new one by refreshing.')) {
+        await fetch('/api/number', { method: 'DELETE', headers: { 'X-User-Id': userId } });
+        localStorage.removeItem('userId');
+        userId = null;
+        await loadNumber();
+        document.getElementById('status').innerText = 'Number deleted. New one assigned.';
+      }
+    }
+    
+    function updateHistory(history) {
+      const container = document.getElementById('historyList');
+      if (!history || history.length === 0) {
+        container.innerText = 'No history yet';
+      } else {
+        container.innerHTML = history.slice().reverse().slice(0, 10).map(n => 
+          `<div>📱 ${n}</div>`
+        ).join('');
+        if (history.length > 10) {
+          container.innerHTML += `<div style="color:#444;">... and ${history.length - 10} more</div>`;
+        }
+      }
+    }
+    
+    loadNumber();
+  </script>
+</body>
+</html>
