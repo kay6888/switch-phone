@@ -1,73 +1,80 @@
-require('dotenv').config();
+// server.js - The easy version
 const express = require('express');
-const cors = require('cors');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
-const Twilio = require('twilio');
 const sqlite3 = require('sqlite3').verbose();
-const { Queue } = require('bull');
-const { createClient } = require('redis');
+const path = require('path');
 
 const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: "*" } });
-
-app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
 
-const redisClient = createClient({ url: process.env.REDIS_URL });
-redisClient.connect();
-
-const provisionQueue = new Queue('number provisioning', { connection: redisClient });
-
+// Create database
 const db = new sqlite3.Database('./numbers.db');
+db.run(`CREATE TABLE IF NOT EXISTS users (
+  user_id TEXT PRIMARY KEY,
+  current_number TEXT,
+  number_history TEXT,
+  created_at INTEGER
+)`);
 
-db.run(`
-  CREATE TABLE IF NOT EXISTS users (
-    user_id TEXT PRIMARY KEY,
-    current_number TEXT,
-    number_history TEXT,
-    created_at INTEGER
-  )
-`);
+// Generate a random US number (for demo - no Twilio needed)
+function generateNumber() {
+  const areaCodes = ['212', '310', '415', '617', '206', '512', '303', '702'];
+  const area = areaCodes[Math.floor(Math.random() * areaCodes.length)];
+  const prefix = Math.floor(Math.random() * 900 + 100);
+  const line = Math.floor(Math.random() * 9000 + 1000);
+  return `+1 (${area}) ${prefix}-${line}`;
+}
 
-const twilioClient = Twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
-
-app.post('/api/provision', async (req, res) => {
-  const { userId } = req.body;
-  const job = await provisionQueue.add('provision', { userId });
-  res.json({ jobId: job.id, status: 'queued' });
-});
-
-provisionQueue.process('provision', async (job) => {
-  const { userId } = job.data;
-  const number = await twilioClient.incomingPhoneNumbers.create({
-    phoneNumber: process.env.NUMBER_POOL[Math.floor(Math.random() * process.env.NUMBER_POOL.length)],
-    voiceUrl: 'http://your-domain.com/voice',
-    smsUrl: 'http://your-domain.com/sms'
-  });
-
-  db.get('SELECT current_number FROM users WHERE user_id = ?', [userId], (err, row) => {
-    if (row && row.current_number) {
-      twilioClient.incomingPhoneNumbers(row.current_number).update({ voiceUrl: null, smsUrl: null });
+// Get current number
+app.get('/api/number', (req, res) => {
+  let userId = req.headers['x-user-id'];
+  if (!userId) {
+    userId = Math.random().toString(36).substring(7);
+    res.setHeader('X-User-Id', userId);
+  }
+  
+  db.get('SELECT current_number, number_history FROM users WHERE user_id = ?', [userId], (err, row) => {
+    if (row) {
+      res.json({ number: row.current_number, history: JSON.parse(row.number_history || '[]') });
+    } else {
+      const newNumber = generateNumber();
+      db.run('INSERT INTO users (user_id, current_number, number_history, created_at) VALUES (?, ?, ?, ?)',
+        [userId, newNumber, JSON.stringify([]), Date.now()]);
+      res.json({ number: newNumber, history: [] });
     }
   });
-
-  const history = await getUserHistory(userId);
-  history.push(row?.current_number);
-
-  db.run(
-    'INSERT OR REPLACE INTO users (user_id, current_number, number_history, created_at) VALUES (?, ?, ?, ?)',
-    [userId, number.phoneNumber, JSON.stringify(history), Date.now()]
-  );
-
-  io.to(userId).emit('number_provisioned', { number: number.phoneNumber });
 });
 
-io.on('connection', (socket) => {
-  const userId = socket.handshake.auth.userId;
-  socket.join(userId);
+// Switch to a new number (no limits!)
+app.post('/api/switch', (req, res) => {
+  let userId = req.headers['x-user-id'];
+  if (!userId) {
+    userId = Math.random().toString(36).substring(7);
+    res.setHeader('X-User-Id', userId);
+  }
+  
+  db.get('SELECT current_number, number_history FROM users WHERE user_id = ?', [userId], (err, row) => {
+    const oldNumber = row ? row.current_number : null;
+    const oldHistory = row && row.number_history ? JSON.parse(row.number_history) : [];
+    
+    const newNumber = generateNumber();
+    const newHistory = oldNumber ? [...oldHistory, oldNumber] : oldHistory;
+    
+    db.run('INSERT OR REPLACE INTO users (user_id, current_number, number_history, created_at) VALUES (?, ?, ?, ?)',
+      [userId, newNumber, JSON.stringify(newHistory), Date.now()]);
+    
+    res.json({ number: newNumber, history: newHistory });
+  });
+});
+
+// Delete current number and get a fresh one (complete reset)
+app.delete('/api/number', (req, res) => {
+  let userId = req.headers['x-user-id'];
+  if (userId) {
+    db.run('DELETE FROM users WHERE user_id = ?', [userId]);
+  }
+  res.json({ message: 'Number deleted. Get a new one by calling GET /api/number' });
 });
 
 const PORT = process.env.PORT || 3000;
-httpServer.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
