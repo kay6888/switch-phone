@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: unlimited-switch
+    runtime: node
+    repo: https://github.com/yourusername/unlimited-switch
+    plan: free
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+    buildCommand: npm install
+    startCommand: node server.js
